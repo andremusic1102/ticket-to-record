@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --all-extras --dev
+
+      - name: lint
+        run: uv run ruff check .
+
+      - name: format
+        run: uv run ruff format --check .
+
+      - name: types
+        run: uv run mypy
+
+      - name: tests
+        run: uv run pytest
+
+      # Generic patterns only here. The term list lives on the author's machine
+      # and is enforced at pre-commit; see scripts/redline_scan.py.
+      - name: red-line scan
+        run: uv run python scripts/redline_scan.py
+
+      # The suite must pass with no key present. If this step ever needs a
+      # secret, a test has started making live calls.
+      - name: end to end, no credentials
+        run: uv run ttr extract --provider fake --no-show

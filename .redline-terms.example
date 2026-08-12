@@ -1,0 +1,10 @@
+# Copy to .redline-terms and fill in. .redline-terms is gitignored and must
+# stay that way: committing the list of words you are hiding publishes them.
+#
+# One term per line, case-insensitive substring match. Lines starting with # are
+# ignored. Include the forms that actually appear in text — a bare company name
+# will not catch its domain, so list both.
+#
+# acme-industries
+# acmeindustries.com
+# northgate-logistics
