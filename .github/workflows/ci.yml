@@ -30,8 +30,12 @@ jobs:
         run: uv run pytest
 
       # Generic patterns only here. The term list lives on the author's machine
-      # and is enforced at pre-commit; see scripts/redline_scan.py.
+      # and is enforced at pre-commit; see scripts/redline_scan.py. The flag is
+      # required: without it the scan fails rather than quietly skipping layer 2,
+      # so a developer machine missing the list cannot report itself clean.
       - name: red-line scan
+        env:
+          REDLINE_ALLOW_MISSING_TERMS: "1"
         run: uv run python scripts/redline_scan.py
 
       # The suite must pass with no key present. If this step ever needs a

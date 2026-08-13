@@ -19,12 +19,20 @@ before anything leaves the disk. CI cannot run it, and that is not a gap being
 ignored: the commit hook is the enforcement point, and CI is a second opinion on
 everything that does not need the secret list.
 
+**A missing term list is a failure, not a lighter run.** Because the list is
+gitignored, every fresh clone starts without it — which is exactly the machine
+most likely to commit something careless. Passing with a parenthetical note
+there would report "clean" for a scan that never looked. Absence must be stated
+by the caller: set ``REDLINE_ALLOW_MISSING_TERMS=1`` (CI does) to run layer 1
+alone on purpose.
+
 Usage:
     python scripts/redline_scan.py [paths...]     # defaults to git-tracked files
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -32,6 +40,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TERMS_FILE = REPO_ROOT / ".redline-terms"
+
+# Set to "1" to run layer 1 alone. For environments where the term list cannot
+# exist — CI — not for a machine whose author simply has not created it yet.
+ALLOW_MISSING_TERMS_ENV = "REDLINE_ALLOW_MISSING_TERMS"
 
 # Data files are only allowed under examples/, which is synthetic by definition.
 BLOCKED_SUFFIXES = {".csv", ".tsv", ".xls", ".xlsx", ".jsonl", ".ndjson", ".parquet", ".db"}
@@ -125,6 +137,18 @@ def scan(paths: list[Path], terms: list[str]) -> list[str]:
 def main(argv: list[str]) -> int:
     paths = [Path(a).resolve() for a in argv[1:]] if len(argv) > 1 else tracked_files()
     terms = load_terms()
+    allowed_missing = os.environ.get(ALLOW_MISSING_TERMS_ENV) == "1"
+
+    if not terms and not allowed_missing:
+        print(
+            f"Red-line scan refused to run: no usable term list at {TERMS_FILE.name}.\n"
+            "  Layer 2 is the only thing that catches employer, customer and\n"
+            "  internal-system names, so a run without it is not a clean run.\n"
+            "  Fix it:   cp .redline-terms.example .redline-terms   (then fill it in)\n"
+            f"  Or state the absence on purpose:   {ALLOW_MISSING_TERMS_ENV}=1",
+            file=sys.stderr,
+        )
+        return 1
 
     findings = scan(paths, terms)
     if findings:
@@ -133,7 +157,7 @@ def main(argv: list[str]) -> int:
             print(f"  {finding}", file=sys.stderr)
         return 1
 
-    note = "" if terms else "  (no .redline-terms found — generic patterns only)"
+    note = "" if terms else f"  (layer 1 only, {ALLOW_MISSING_TERMS_ENV}=1)"
     print(f"Red-line scan clean: {len(paths)} files.{note}")
     return 0
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import redline_scan
 
 
@@ -70,3 +72,40 @@ class TestDataFiles:
     def test_flags_data_file_outside_examples(self, tmp_path: Path) -> None:
         path = _write(tmp_path, "export.csv", "id,name\n1,a\n")
         assert any("data file outside examples/" in f for f in redline_scan.scan([path], []))
+
+
+class TestMissingTermList:
+    """A fresh clone has no term list. That machine must not report itself clean.
+
+    These drive ``main`` rather than ``scan`` because the refusal is a decision
+    about whether to run at all, not a finding about a file.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_terms(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setattr(redline_scan, "TERMS_FILE", tmp_path / ".redline-terms")
+        monkeypatch.delenv(redline_scan.ALLOW_MISSING_TERMS_ENV, raising=False)
+
+    def test_refuses_without_term_list(self, tmp_path: Path) -> None:
+        clean = _write(tmp_path, "ok.py", "VALUE = 1\n")
+        assert redline_scan.main(["redline_scan.py", str(clean)]) == 1
+
+    def test_runs_when_absence_is_declared(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(redline_scan.ALLOW_MISSING_TERMS_ENV, "1")
+        clean = _write(tmp_path, "ok.py", "VALUE = 1\n")
+        assert redline_scan.main(["redline_scan.py", str(clean)]) == 0
+
+    def test_declared_absence_still_runs_layer_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(redline_scan.ALLOW_MISSING_TERMS_ENV, "1")
+        key = "AIza" + "D" * 35
+        dirty = _write(tmp_path, "config.py", f'KEY = "{key}"')
+        assert redline_scan.main(["redline_scan.py", str(dirty)]) == 1
+
+    def test_term_list_with_only_comments_is_not_a_list(self, tmp_path: Path) -> None:
+        (tmp_path / ".redline-terms").write_text("# nothing yet\n", encoding="utf-8")
+        clean = _write(tmp_path, "ok.py", "VALUE = 1\n")
+        assert redline_scan.main(["redline_scan.py", str(clean)]) == 1
