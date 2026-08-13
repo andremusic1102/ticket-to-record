@@ -72,7 +72,9 @@ src/ticket_to_record/
   llm/fake.py          deterministic rule-based baseline
   llm/gemini.py        schema-enforced structured output
   pipeline/extract.py  ticket in, record out
-  cli.py               ttr extract
+  synth/generate.py    labelled tickets from a designed distribution
+  eval/score.py        per-field scoring against a constant baseline
+  cli.py               ttr extract | synth | evaluate
 scripts/redline_scan.py  pre-commit content guard
 examples/tickets.jsonl   synthetic tickets, hand-written
 ```
@@ -90,15 +92,78 @@ committed; that file is gitignored on purpose, and
 [`scripts/redline_scan.py`](scripts/redline_scan.py) explains why hashing them
 would not be a fix.
 
+## Measuring it
+
+```bash
+uv run ttr evaluate --provider fake        # no key, no data files needed
+```
+
+```
+field            n   score  baseline    lift  fabricated  missed  wrong
+product_model  200   64.5%     26.5%  +38.0%           4      65      2
+serial_number  200   30.0%      0.5%  +29.5%           0      99     41
+purchase_date  200   86.0%     69.0%  +17.0%           0      28      0
+issue_category 200   71.0%     19.5%  +51.5%           —       —     58
+under_coverage 200   75.0%     55.5%  +19.5%           0      50      0
+```
+
+Three columns exist because an accuracy number without them misleads.
+
+**`baseline` is the best constant answer for that field.** Most tickets do not
+state a purchase date, so answering null every time — reading nothing, thinking
+nothing — scores 69%. Reporting 86% without that comparison would make a
+9-point-lift result sound like a 20-point one. Any field whose lift is zero is
+printed in red, because a field where the system cannot beat a constant is a
+field it is not doing any work on.
+
+**`n` is per field, and never averaged across them.** Real evaluation sets are
+ragged: a field checkable against a structured column can be labelled on
+thousands of tickets while the rest are labelled on the fifty a human read. One
+blended figure hides a difference of that size, so there isn't one.
+
+**The failure columns separate three different mistakes.** A value invented
+where none existed, a value missed that was there, and a value found but wrong
+are a data-integrity problem, a coverage problem and a quality problem — with
+different owners and different fixes. Collapsing them into "24% wrong" throws
+away the part an engineer would act on.
+
+Failed provider calls are counted separately and scored as neither right nor
+wrong. Marking them wrong blames the model for an outage; dropping them reports
+accuracy for the subset that happened to succeed.
+
+## Generating the data
+
+```bash
+uv run ttr synth --count 200 --seed 0
+```
+
+The generator's distributions are the deliverable, not the prose. Each rate is
+tagged in the source as *measured* — taken from a profile of ~27,000 real
+service messages — or *assumed*, so nobody later quotes a guess as a finding.
+Bodies mimic already-redacted text, with tokens like `[EMAIL]` where contact
+details were, because that is what this pipeline receives in production.
+
+**One finding from building it, kept because it generalises.** The first version
+scored the rule-based baseline at 100% on three fields. Not because the baseline
+is good — because the generator wrote serials as "Serial number X", which is
+exactly the pattern the baseline greps for. A generator and a baseline written
+by the same hand agree with each other unless something forces them apart, and
+an evaluation the baseline cannot lose measures nothing. The fix was surface
+variation: unlabelled identifiers, four date formats, varied prefixes. The
+baseline dropped to 30–86% depending on the field, and `tests/test_synth.py`
+now guards against the regression. Note that the harness could not have caught
+this: a constant-answer baseline detects majority-class bluffing, not a test set
+built to the extractor's assumptions.
+
 ## Roadmap
 
 | | |
 |---|---|
-| Synthetic ticket generator | a designed distribution, not six hand-written examples |
-| Evaluation harness | labelled set, per-field accuracy, regression runs between prompt versions |
+| ~~Synthetic ticket generator~~ | done — `ttr synth` |
+| ~~Evaluation harness~~ | done — `ttr evaluate` |
+| Model vs baseline | the numbers above are the floor; the point is what beats them |
 | Retrieval | grounding extraction in prior resolved tickets |
 | Batch pipeline | concurrency, retries, cost and latency accounting per run |
-| Anomaly detection | tickets that do not look like anything seen before |
 
-A design write-up covering the trade-offs behind each of these will land with
-the evaluation harness — numbers first, prose second.
+A design write-up covering the trade-offs behind each of these will land next —
+numbers first, prose second.

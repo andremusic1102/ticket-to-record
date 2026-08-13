@@ -153,6 +153,37 @@ class ExtractionResult(BaseModel):
         ]
 
 
+class LabelledTicket(BaseModel):
+    """A ticket paired with the record it should produce.
+
+    The evaluation set and the synthetic generator both speak this shape, so a
+    hand-labelled ticket and a generated one are interchangeable to the harness.
+    That matters more than it looks: the point of generating data is to develop
+    against it and then swap in real labels without touching the scorer.
+
+    ``notes`` records why a ticket exists — "purchase date absent", "injection
+    attempt". A failure report that can group by intent is worth more than one
+    that lists ticket ids.
+
+    ``scored_fields`` exists because real evaluation sets are ragged. One field
+    may be labelled on thousands of tickets — a serial that appears both in the
+    text and in a structured column can be checked automatically — while the
+    rest are labelled on the fifty somebody read by hand. Forcing one
+    denominator onto all of them would either throw away the cheap labels or
+    publish a single blended accuracy that hides a 70-fold difference in
+    sample size. ``None`` means every field is labelled — the synthetic case.
+    """
+
+    ticket: Ticket
+    gold: ExtractedRecord
+    notes: list[str] = Field(default_factory=list)
+    scored_fields: list[str] | None = None
+
+    def scores(self, field: str) -> bool:
+        """Whether this ticket carries a usable label for ``field``."""
+        return self.scored_fields is None or field in self.scored_fields
+
+
 def parse_iso_date(value: str | None) -> date | None:
     """Return ``value`` as a date, or None if it is missing or malformed.
 
