@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from ticket_to_record.llm.base import LLMError
 from ticket_to_record.llm.fake import FakeLLM
 from ticket_to_record.models import ExtractionResult, RequestedAction, Urgency
 from ticket_to_record.pipeline.extract import extract_many, load_tickets, write_results
@@ -74,3 +75,54 @@ class TestPromptInjection:
         # has no such structural guarantee, which is why this test exists.
         evidence = " ".join(results["T-1006"].record.evidence).lower()
         assert "approved by support" not in evidence
+
+
+class TestConcurrencyAndRetry:
+    """The two things the first real evaluation run needed from the pipeline.
+
+    Both were deferred on the grounds that there was no accuracy number to
+    protect yet. 316's set is 2,571 tickets, which is over half an hour of
+    sequential calls and long enough that one transient provider error throws
+    the run away.
+    """
+
+    def test_workers_do_not_reorder_results(self) -> None:
+        """Completion order is the provider's business; row order is ours.
+
+        A report whose rows depend on network timing cannot be diffed between
+        runs, which is most of what a report is for.
+        """
+        tickets = load_tickets(EXAMPLES)
+        sequential = [t.ticket_id for t, _, _ in extract_many(tickets, FakeLLM())]
+        parallel = [t.ticket_id for t, _, _ in extract_many(tickets, FakeLLM(), workers=4)]
+        assert parallel == sequential
+
+    def test_a_failure_is_retried_and_can_succeed(self) -> None:
+        class FlakyLLM(FakeLLM):
+            def __init__(self) -> None:
+                super().__init__()
+                self.calls = 0
+
+            def structured(self, **kwargs: object):  # type: ignore[no-untyped-def]
+                self.calls += 1
+                if self.calls == 1:
+                    raise LLMError("transient")
+                return super().structured(**kwargs)  # type: ignore[arg-type]
+
+        llm = FlakyLLM()
+        ticket = load_tickets(EXAMPLES)[0]
+        ((_, result, error),) = extract_many([ticket], llm, retries=1)
+        assert error is None
+        assert result is not None
+        assert llm.calls == 2
+
+    def test_exhausted_retries_report_the_error_and_do_not_raise(self) -> None:
+        class DeadLLM(FakeLLM):
+            def structured(self, **kwargs: object):  # type: ignore[no-untyped-def]
+                raise LLMError("provider down")
+
+        # The whole point: one dead ticket must not abort a 2,571-ticket run,
+        # and it must be counted rather than dropped.
+        ((_, result, error),) = extract_many([load_tickets(EXAMPLES)[0]], DeadLLM(), retries=1)
+        assert result is None
+        assert error == "provider down"

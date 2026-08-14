@@ -133,6 +133,8 @@ def evaluate(
     count: Annotated[int, typer.Option("--count", "-n", min=1)] = 200,
     seed: Annotated[int, typer.Option("--seed", "-s")] = 0,
     provider: Annotated[str | None, typer.Option("--provider", "-p")] = None,
+    workers: Annotated[int, typer.Option("--workers", "-w", min=1, max=32)] = 1,
+    retries: Annotated[int, typer.Option("--retries", min=0, max=5)] = 0,
 ) -> None:
     """Score an extraction run against labelled tickets.
 
@@ -160,14 +162,27 @@ def evaluate(
     llm = build_llm(settings)
     results: dict[str, ExtractionResult] = {}
     failures = 0
-    for _ticket, result, _error in extract_many((item.ticket for item in labelled), llm):
+    tokens_in = tokens_out = 0
+    for _ticket, result, _error in extract_many(
+        (item.ticket for item in labelled), llm, workers=workers, retries=retries
+    ):
         if result is None:
             failures += 1
         else:
             results[result.ticket_id] = result
+            tokens_in += result.input_tokens or 0
+            tokens_out += result.output_tokens or 0
 
     report = score_run(labelled, results, failures=failures, provider=llm.name, model=llm.model)
     _render_report(report)
+    # Printed because a run that costs money should say what it cost, in the
+    # units the invoice is in. A rate is deliberately not applied here: prices
+    # change, and a stale multiplier in the source reads as authoritative.
+    if tokens_in or tokens_out:
+        console.print(
+            f"[dim]{tokens_in:,} input + {tokens_out:,} output tokens "
+            f"over {len(results):,} extractions[/dim]"
+        )
 
 
 def _render_report(report: Report) -> None:
@@ -175,7 +190,15 @@ def _render_report(report: Report) -> None:
     for column in ("field", "n", "score", "baseline", "lift", "fabricated", "missed", "wrong"):
         table.add_column(column, justify="left" if column == "field" else "right")
 
+    # A field nobody labelled has no score, and printing `0.0%` for it says the
+    # opposite. Real evaluation sets are ragged -- the sandbox set labels six of
+    # the nine fields -- so this is the normal case, not an edge one, and the
+    # unlabelled fields are named underneath rather than dropped silently.
+    unlabelled = [name for name, entry in report.fields.items() if entry.n == 0]
+
     for name, entry in report.fields.items():
+        if entry.n == 0:
+            continue
         # A field whose lift over the best constant answer is nil is doing no
         # work, however high its score looks. Flagging it in the table is the
         # only way that reads at a glance.
@@ -197,6 +220,8 @@ def _render_report(report: Report) -> None:
     console.print(
         "[dim]* scored by overlap, not exact match; no constant baseline is meaningful[/dim]"
     )
+    if unlabelled:
+        console.print(f"[dim]not labelled in this set: {', '.join(unlabelled)}[/dim]")
     console.print(
         f"[bold]{report.extracted}/{report.tickets} extracted[/bold]"
         + (f" — [red]{report.failed} failed[/red]" if report.failed else "")
