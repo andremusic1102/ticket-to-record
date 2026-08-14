@@ -163,8 +163,31 @@ appeared.
 **Automatically scored, 2,543 real tickets, one field.** A serial appears both in
 the ticket text and in a structured column, so it can be scored at scale with no
 hand labelling — but only 629 of the 2,543 state one. The other 1,914 are not
-filler: the correct answer is `null`, and an extractor that produces a serial
-anyway is hallucinating in a way that is detectable for free.
+filler: the correct answer is `null`, and they are the only thing here that
+measures abstention.
+
+| Field | n | model | rules | constant | lift over constant |
+|---|---:|---:|---:|---:|---:|
+| `serial_number` | 2,530 | **95.3%** | 74.6% | 75.2% | **+20.0%** |
+
+Thirteen calls failed after three retries and are scored as neither right nor
+wrong. The two extractors fail in opposite characters, which one number would
+have hidden:
+
+| | fabricated | missed | wrong |
+|---|---:|---:|---:|
+| rules | 35 | 2 | 608 |
+| model | **95** | 5 | 20 |
+
+The keyword extractor nearly always finds *a* serial and takes the wrong token
+608 times. The model gets the value right when there is one — and invents a
+serial in **95 of the 1,914 tickets that state none**, three times the
+baseline's fabrication rate, on a task whose prompt says to return null rather
+than guess.
+
+That number is only visible because three quarters of the set has no answer to
+find. An evaluation built only from cases that *have* answers cannot see
+fabrication at all: there is nothing to fabricate into.
 
 Three columns exist because an accuracy number without them misleads.
 
