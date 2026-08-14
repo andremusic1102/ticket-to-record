@@ -54,7 +54,13 @@ SKIP_DIRS = (".git/", ".venv/", "__pycache__/", ".mypy_cache/", ".ruff_cache/", 
 EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 EMAIL_ALLOWED = ("@example.com", "@example.org", "users.noreply.github.com")
 
-PHONE = re.compile(r"(?<!\d)(?:\+1[ -]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)")
+# A bracketed area code needs no separator after it, and a real number is
+# often punctuated once rather than twice. Requiring a separator in both
+# positions is how the sibling repository let real numbers through both its
+# masking layer and its scanner on the same day -- two defences, one blind
+# spot, one author. Bare ten digits stay out: this repo has legitimate
+# ten-digit constants, and a check that always fails gets bypassed.
+PHONE = re.compile(r"(?<!\d)(?:\+1[ -]?)?(?:\(\d{3}\)[ .-]?|\d{3}[ .-])\d{3}[ .-]?\d{4}(?!\d)")
 
 CREDENTIALS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Google API key", re.compile(r"AIza[0-9A-Za-z_-]{35}")),
