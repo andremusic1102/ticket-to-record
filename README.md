@@ -340,11 +340,26 @@ make check   # lint, types, tests, red-line scan — the same set CI runs
 ```
 
 `make install` also installs the pre-commit hook. The hook blocks credentials,
-contact details, and data files outside `examples/`. Copy
-`.redline-terms.example` to `.redline-terms` to add names that must never be
-committed; that file is gitignored on purpose, and
-[`scripts/redline_scan.py`](scripts/redline_scan.py) explains why hashing them
-would not be a fix.
+contact details, and data files outside `examples/`.
+
+### On a new machine
+
+```bash
+make install
+ln -s /path/to/your/term-list.txt .redline-terms   # or copy .redline-terms.example
+make check
+```
+
+`.redline-terms` holds names that must never be committed and is gitignored on
+purpose — [`scripts/redline_scan.py`](scripts/redline_scan.py) explains why
+committing it, or hashing it, would not be a fix. A symlink to a file that syncs
+between your machines is the practical form: a fresh clone is the machine most
+likely to commit something careless, and it is also the one that starts without
+the list.
+
+The scan **fails** rather than passing with a note when the list is missing.
+Reporting "clean" for a check that never looked is the failure mode that
+matters here.
 
 ## Generating the data
 
