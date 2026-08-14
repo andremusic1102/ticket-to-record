@@ -32,8 +32,19 @@ class Settings(BaseSettings):
     # Upgrading is a deliberate act with a re-run attached.
     gemini_model: str = Field(default="gemini-3.6-flash", validation_alias="TTR_GEMINI_MODEL")
 
-    # Kept at 0 for extraction. Sampling buys nothing here and it makes the
-    # evaluation harness non-reproducible, which is the one property it needs.
+    # Kept at 0 for extraction: sampling buys nothing when the task is copying
+    # values out of a document.
+    #
+    # It was also claimed here that this made the harness reproducible. **That
+    # was wrong and it was measured wrong.** Six identical runs over the same 50
+    # tickets put `under_coverage` between 69.4% and 77.6% and `product_model`
+    # between 85.1% and 89.4%, while `serial_number` and `purchase_date` did not
+    # move at all. Temperature 0 constrains sampling; it does not make a hosted
+    # model deterministic, and the fields that drift are the ones that need a
+    # judgement rather than a copy.
+    #
+    # The harness answer is `ttr evaluate --repeat N`, which reports each
+    # field's mean and range. Anything narrower than that range is not a result.
     temperature: float = Field(default=0.0, validation_alias="TTR_TEMPERATURE")
 
 

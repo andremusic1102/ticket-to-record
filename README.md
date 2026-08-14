@@ -151,14 +151,20 @@ a deliberate over-sample of the cases where the serial is *not* stated in the
 text, because those are the hard ones and a random draw would decide how many
 appeared.
 
-| Field | n | model | rules | constant | lift over constant |
-|---|---:|---:|---:|---:|---:|
-| `product_model` | 47 | **89.4%** | 55.3% | 55.3% | **+34.0%** |
-| `serial_number` | 49 | **98.0%** | 79.6% | 77.6% | **+20.4%** |
-| `purchase_date` | 49 | 98.0% | 71.4% | 93.9% | +4.1% |
-| `issue_category` | 47 | **76.6%** | 27.7% | 59.6% | **+17.0%** |
-| `under_coverage` | 49 | 73.5% | 75.5% | 75.5% | **−2.0%** |
-| `parts_mentioned` | 47 | 68.1% | 16.0% | — | — |
+Every model number is a **mean over five identical runs**, with the range,
+because a single run is a draw rather than a measurement — see below.
+
+| Field | n | model (mean) | min–max | rules | constant | mean lift |
+|---|---:|---:|---:|---:|---:|---:|
+| `product_model` | 47 | **88.9%** | 87.2–89.4 | 55.3% | 55.3% | **+33.6%** |
+| `serial_number` | 49 | **97.6%** | 95.9–98.0 | 79.6% | 77.6% | **+20.0%** |
+| `purchase_date` | 49 | 98.0% | 98.0–98.0 | 71.4% | 93.9% | +4.1% |
+| `issue_category` | 47 | **78.3%** | 74.5–80.9 | 27.7% | 59.6% | **+18.7%** |
+| `under_coverage` | 49 | 75.5% | 69.4–79.6 | 79.6% | 79.6% | **−4.1%** |
+| `parts_mentioned` | 47 | 67.1% | 65.9–68.3 | 16.0% | — | — |
+
+The `rules` column has no range: it is deterministic. The model column is not,
+and that is the next section.
 
 **Automatically scored, 2,543 real tickets, one field.** A serial appears both in
 the ticket text and in a structured column, so it can be scored at scale with no
@@ -213,14 +219,32 @@ accuracy for the subset that happened to succeed.
 
 ## Failure modes, including the ones that are still open
 
-**The model loses to a constant on one field, and the loss is informative.**
-`under_coverage` scores 73.5% against 75.5% for answering `null` every time, with
-**11 misses and 2 fabrications**. It is far more likely to abstain where coverage
-*is* stated than to invent coverage where it is not — the safe direction, and the
-direction the prompt pushes, since it instructs the model not to infer coverage
-from a purchase date. Real tickets carry the claim by implicature — *"failed in
-less than 30 days"*, *"still in stock, unsold"* — and the instruction to abstain
-unless something is stated turns those into `null`.
+**Temperature 0 is not reproducibility, and finding that out invalidated a
+comparison I had already made.** Identical input, same model, five runs:
+
+| Field | spread over 5 identical runs |
+|---|---:|
+| `purchase_date` | **0.0** |
+| `serial_number` | 2.0 |
+| `product_model` | 2.1 |
+| `parts_mentioned` | 2.4 |
+| `issue_category` | 6.4 |
+| `under_coverage` | **10.2** |
+
+The fields pinned to a verbatim string do not move; the fields needing a
+judgement do, and the widest is the one where the judgement is hardest. Two
+labels were corrected during review, the score moved two points, and that move
+was reported as an effect of the correction — it is a third of the field's
+run-to-run range and means nothing. `ttr evaluate --repeat N` now reports mean
+and range, and a comment in `config.py` claiming temperature 0 made the harness
+reproducible has been corrected.
+
+**The model loses to a constant on one field, and the loss survives the spread.**
+`under_coverage` averages 75.5% against 79.6% for answering `null` every time.
+Across eleven runs it never beat that constant and tied it once — which is the
+only sort of claim a set this size can carry. It errs in both directions: it
+abstains where coverage is stated, and it asserts coverage where the ticket
+merely *asks* about it, though the prompt tells it not to infer.
 
 This is left as measured. Changing the prompt and re-reporting the higher number
 would be reporting a number chosen after seeing the answer.

@@ -135,12 +135,21 @@ def evaluate(
     provider: Annotated[str | None, typer.Option("--provider", "-p")] = None,
     workers: Annotated[int, typer.Option("--workers", "-w", min=1, max=32)] = 1,
     retries: Annotated[int, typer.Option("--retries", min=0, max=5)] = 0,
+    repeat: Annotated[int, typer.Option("--repeat", min=1, max=20)] = 1,
 ) -> None:
     """Score an extraction run against labelled tickets.
 
     With no --input, generates a labelled set on the fly. That keeps the
     command runnable on a fresh clone with no key and no data files, which is
     the difference between a harness people use and one they read about.
+
+    ``--repeat`` runs the whole thing N times and reports each field's mean and
+    range instead of one number. It exists because temperature 0 does not make
+    a provider deterministic: on 50 real tickets, six identical runs put
+    `under_coverage` anywhere between 69.4% and 77.6%. A single run is a draw
+    from that spread, and reporting it as a measurement invites the reader to
+    compare two numbers that differ by less than the noise -- which is exactly
+    the mistake this option was written after making.
     """
     settings = load_settings()
     if provider is not None:
@@ -160,21 +169,29 @@ def evaluate(
         ]
 
     llm = build_llm(settings)
-    results: dict[str, ExtractionResult] = {}
-    failures = 0
+    reports: list[Report] = []
     tokens_in = tokens_out = 0
-    for _ticket, result, _error in extract_many(
-        (item.ticket for item in labelled), llm, workers=workers, retries=retries
-    ):
-        if result is None:
-            failures += 1
-        else:
-            results[result.ticket_id] = result
-            tokens_in += result.input_tokens or 0
-            tokens_out += result.output_tokens or 0
+    for round_number in range(repeat):
+        results: dict[str, ExtractionResult] = {}
+        failures = 0
+        for _ticket, result, _error in extract_many(
+            (item.ticket for item in labelled), llm, workers=workers, retries=retries
+        ):
+            if result is None:
+                failures += 1
+            else:
+                results[result.ticket_id] = result
+                tokens_in += result.input_tokens or 0
+                tokens_out += result.output_tokens or 0
+        reports.append(
+            score_run(labelled, results, failures=failures, provider=llm.name, model=llm.model)
+        )
+        if repeat > 1:
+            console.print(f"[dim]run {round_number + 1}/{repeat} done[/dim]")
 
-    report = score_run(labelled, results, failures=failures, provider=llm.name, model=llm.model)
-    _render_report(report)
+    _render_report(reports[0])
+    if repeat > 1:
+        _render_spread(reports)
     # Printed because a run that costs money should say what it cost, in the
     # units the invoice is in. A rate is deliberately not applied here: prices
     # change, and a stale multiplier in the source reads as authoritative.
@@ -183,6 +200,49 @@ def evaluate(
             f"[dim]{tokens_in:,} input + {tokens_out:,} output tokens "
             f"over {len(results):,} extractions[/dim]"
         )
+
+
+def _render_spread(reports: list[Report]) -> None:
+    """Mean and range per field across identical runs.
+
+    The range is the point. Temperature 0 is widely treated as "deterministic",
+    and it is not: identical input, six runs, and `under_coverage` landed
+    anywhere in an 8.2-point band while `serial_number` did not move at all.
+    The fields that move are the ones needing a judgement; the fields pinned to
+    a verbatim string do not.
+
+    So a single-run table is a draw, and two single-run tables cannot be
+    compared unless they differ by more than this column.
+    """
+    table = Table(title=f"{len(reports)} identical runs — is the number stable?")
+    for column in ("field", "n", "mean", "min", "max", "spread", "constant", "mean lift"):
+        table.add_column(column, justify="left" if column == "field" else "right")
+
+    for name in reports[0].fields:
+        scores = [r.fields[name].score for r in reports if r.fields[name].n]
+        if not scores:
+            continue
+        entry = reports[0].fields[name]
+        spread = max(scores) - min(scores)
+        mean = sum(scores) / len(scores)
+        # Red when the spread is wider than a couple of points: at that width
+        # any comparison between two single runs of this field is noise.
+        width = f"{spread:.1%}"
+        table.add_row(
+            name + (" *" if entry.soft else ""),
+            str(entry.n),
+            f"{mean:.1%}",
+            f"{min(scores):.1%}",
+            f"{max(scores):.1%}",
+            f"[red]{width}[/red]" if spread > 0.02 else width,
+            "—" if entry.soft else f"{entry.baseline:.1%}",
+            "—" if entry.soft else f"{mean - entry.baseline:+.1%}",
+        )
+    console.print(table)
+    console.print(
+        "[dim]spread is max minus min over identical runs. A difference between two "
+        "single runs smaller than this is not a result.[/dim]"
+    )
 
 
 def _render_report(report: Report) -> None:
